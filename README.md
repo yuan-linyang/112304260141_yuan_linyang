@@ -1,22 +1,11 @@
----
-title: MNIST 手写数字识别系统
-emoji: 🎯
-colorFrom: blue
-colorTo: green
-sdk: gradio
-sdk_version: 4.0.0
-app_file: app.py
-pinned: false
-license: mit
----
 
 # 机器学习实验：基于 CNN 的手写数字识别
 
 ## 1. 学生信息
 
-- **姓名**：袁林阳
+- **姓名**：袁琳洋
 - **学号**：112304260141
-- **班级**：[数据]
+- **班级**：[数据1231]
 
 > ⚠️ 注意：姓名和学号必须填写，本次实验提交有效。
 
@@ -360,7 +349,7 @@ https://huggingface.co/spaces/yuan-linyang/mnist-digit-recognition
 
 ##  许可证
 
-MIT License © 2026 袁林阳
+MIT License © 2026 袁琳洋
 
 ---
 

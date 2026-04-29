@@ -14,35 +14,22 @@ device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 class SimpleCNN(nn.Module):
     def __init__(self):
         super(SimpleCNN, self).__init__()
-        self.features = nn.Sequential(
-            nn.Conv2d(1, 32, kernel_size=3, padding=1),
-            nn.BatchNorm2d(32),
-            nn.ReLU(),
-            nn.MaxPool2d(2, 2),
-            
-            nn.Conv2d(32, 64, kernel_size=3, padding=1),
-            nn.BatchNorm2d(64),
-            nn.ReLU(),
-            nn.MaxPool2d(2, 2),
-            
-            nn.Conv2d(64, 128, kernel_size=3, padding=1),
-            nn.BatchNorm2d(128),
-            nn.ReLU(),
-            nn.MaxPool2d(2, 2)
-        )
-        
-        self.classifier = nn.Sequential(
-            nn.Linear(128 * 3 * 3, 256),
-            nn.BatchNorm1d(256),
-            nn.ReLU(),
-            nn.Dropout(0.5),
-            nn.Linear(256, 10)
-        )
+        self.conv1 = nn.Conv2d(1, 32, kernel_size=3, padding=1)
+        self.conv2 = nn.Conv2d(32, 64, kernel_size=3, padding=1)
+        self.conv3 = nn.Conv2d(64, 128, kernel_size=3, padding=1)
+        self.pool = nn.MaxPool2d(2, 2)
+        self.relu = nn.ReLU()
+        self.fc1 = nn.Linear(128 * 3 * 3, 128)
+        self.fc2 = nn.Linear(128, 10)
+        self.dropout = nn.Dropout(0.5)
     
     def forward(self, x):
-        x = self.features(x)
+        x = self.pool(self.relu(self.conv1(x)))
+        x = self.pool(self.relu(self.conv2(x)))
+        x = self.pool(self.relu(self.conv3(x)))
         x = x.view(x.size(0), -1)
-        x = self.classifier(x)
+        x = self.dropout(self.relu(self.fc1(x)))
+        x = self.fc2(x)
         return x
 
 model = SimpleCNN().to(device)
@@ -50,63 +37,139 @@ model.load_state_dict(torch.load('best_model.pth', map_location=device))
 model.eval()
 
 def preprocess_image(image):
-    if image is None:
+    try:
+        if image is None:
+            print("图像为 None")
+            return None
+        
+        # Gradio Sketchpad 可能返回字典，需要提取图像
+        if isinstance(image, dict):
+            # 从字典中提取图像数据
+            if 'composite' in image:
+                image_data = image['composite']
+            elif 'base' in image:
+                image_data = image['base']
+            else:
+                image_data = list(image.values())[0]
+            
+            # 如果是 numpy 数组
+            if isinstance(image_data, np.ndarray):
+                image = Image.fromarray(image_data)
+            # 如果是 PIL Image
+            elif isinstance(image_data, Image.Image):
+                image = image_data
+            # 如果是 base64 字符串
+            elif isinstance(image_data, str):
+                import base64
+                img_bytes = base64.b64decode(image_data)
+                image = Image.open(io.BytesIO(img_bytes))
+            else:
+                print(f"未知的图像数据类型：{type(image_data)}")
+                return None
+        elif isinstance(image, np.ndarray):
+            image = Image.fromarray(image)
+        elif isinstance(image, Image.Image):
+            pass  # 已经是 PIL Image
+        else:
+            print(f"未知的图像类型：{type(image)}")
+            return None
+        
+        print(f"原始图像模式：{image.mode}, 大小：{image.size}")
+        
+        # 处理 RGBA 图像（移除 alpha 通道）
+        if image.mode == 'RGBA':
+            # 创建白色背景
+            background = Image.new('RGB', image.size, (255, 255, 255))
+            # 使用 alpha 通道粘贴
+            background.paste(image, mask=image.split()[3])
+            image = background
+            print("已转换 RGBA 为 RGB")
+        
+        # 转换为灰度图
+        if image.mode != 'L':
+            image = image.convert('L')
+            print("已转换为灰度图")
+        
+        # 调整大小到 28x28
+        image = image.resize((28, 28), Image.BILINEAR)
+        image = np.array(image)
+        
+        print(f"处理后图像形状：{image.shape}, 数值范围：[{image.min()}, {image.max()}]")
+        
+        # 归一化到 0-1
+        if image.max() > 1.0:
+            image = image / 255.0
+        
+        # 反转颜色（MNIST 是黑底白字）
+        image = 1.0 - image
+        
+        # 转换为 PyTorch 张量
+        image = torch.from_numpy(image).float().unsqueeze(0).unsqueeze(0)
+        image = image.to(device)
+        
+        print(f"张量形状：{image.shape}")
+        return image
+    except Exception as e:
+        print(f"预处理错误：{e}")
+        import traceback
+        traceback.print_exc()
         return None
-    
-    image = image.convert('L')
-    image = image.resize((28, 28), Image.BILINEAR)
-    image = np.array(image)
-    
-    if image.max() > 1.0:
-        image = image / 255.0
-    
-    image = 1.0 - image
-    
-    image = torch.from_numpy(image).float().unsqueeze(0).unsqueeze(0)
-    image = image.to(device)
-    
-    return image
 
 def predict_digit(image):
-    if image is None:
-        return "请先上传或绘制数字", None, None
-    
-    processed = preprocess_image(image)
-    
-    with torch.no_grad():
-        output = model(processed)
-        probabilities = torch.nn.functional.softmax(output, dim=1)
-        probs = probabilities.cpu().numpy()[0]
-        prediction = torch.argmax(output, dim=1).item()
-    
-    top_3_indices = np.argsort(probs)[::-1][:3]
-    top_3_probs = probs[top_3_indices]
-    
-    top_3_results = [(int(idx), float(prob)*100) for idx, prob in zip(top_3_indices, top_3_probs)]
-    
-    fig, ax = plt.subplots(figsize=(10, 6))
-    digits = [str(i) for i in range(10)]
-    colors = ['green' if i == prediction else 'gray' for i in range(10)]
-    ax.bar(digits, probs, color=colors, alpha=0.7)
-    ax.set_xlabel('Digit', fontsize=12)
-    ax.set_ylabel('Probability', fontsize=12)
-    ax.set_title('Prediction Probability Distribution', fontsize=14, fontweight='bold')
-    ax.set_ylim(0, 1.0)
-    ax.grid(True, alpha=0.3)
-    
-    for i, v in enumerate(probs):
-        ax.text(i, v + 0.02, f'{v*100:.1f}%', ha='center', va='bottom', fontsize=8, rotation=45)
-    
-    plt.tight_layout()
-    buf = io.BytesIO()
-    plt.savefig(buf, format='png', dpi=150, bbox_inches='tight')
-    buf.seek(0)
-    prob_plot = Image.open(buf)
-    
-    confidence = top_3_probs[0]
-    result_text = f"预测结果：{prediction}"
-    
-    return result_text, top_3_results, prob_plot
+    try:
+        if image is None:
+            return "请先上传或绘制数字", None, None
+        
+        processed = preprocess_image(image)
+        
+        if processed is None:
+            return "图像预处理失败", None, None
+        
+        with torch.no_grad():
+            output = model(processed)
+            probabilities = torch.nn.functional.softmax(output, dim=1)
+            probs = probabilities.cpu().numpy()[0]
+            prediction = int(torch.argmax(output, dim=1).item())
+        
+        top_3_indices = np.argsort(probs)[::-1][:3]
+        top_3_probs = probs[top_3_indices]
+        
+        # 格式化为 Gradio JSON 组件可接受的格式
+        top_3_results = {
+            "predictions": [
+                {"digit": int(idx), "probability": f"{float(prob)*100:.2f}%"}
+                for idx, prob in zip(top_3_indices, top_3_probs)
+            ]
+        }
+        
+        fig, ax = plt.subplots(figsize=(10, 6))
+        digits = [str(i) for i in range(10)]
+        colors = ['green' if i == prediction else 'gray' for i in range(10)]
+        ax.bar(digits, probs, color=colors, alpha=0.7)
+        ax.set_xlabel('Digit', fontsize=12)
+        ax.set_ylabel('Probability', fontsize=12)
+        ax.set_title('Prediction Probability Distribution', fontsize=14, fontweight='bold')
+        ax.set_ylim(0, 1.0)
+        ax.grid(True, alpha=0.3)
+        
+        for i, v in enumerate(probs):
+            ax.text(i, v + 0.02, f'{v*100:.1f}%', ha='center', va='bottom', fontsize=8, rotation=45)
+        
+        plt.tight_layout()
+        buf = io.BytesIO()
+        plt.savefig(buf, format='png', dpi=150, bbox_inches='tight')
+        buf.seek(0)
+        prob_plot = Image.open(buf)
+        
+        confidence = top_3_probs[0]
+        result_text = f"🎯 预测结果：数字 {prediction}\n置信度：{confidence*100:.2f}%"
+        
+        return result_text, top_3_results, prob_plot
+    except Exception as e:
+        print(f"预测错误：{e}")
+        import traceback
+        traceback.print_exc()
+        return f"识别出错：{str(e)}", None, None
 
 def sketch_to_image(sketch):
     if sketch is None:
@@ -166,7 +229,7 @@ with gr.Blocks(title="MNIST 手写数字识别系统", theme=gr.themes.Soft()) a
             )
             
             def clear_canvas():
-                return None, "识别结果将显示在这里", None, None
+                return None, "📝 识别结果将显示在这里", {"predictions": []}, None
             
             clear_btn.click(
                 fn=clear_canvas,
