@@ -25,12 +25,12 @@ wheels/
 
 # PyTorch
 *.pth
-*.pt
+*.onnx
 
 # Jupyter Notebook
 .ipynb_checkpoints
 
-# IDEs
+# IDE
 .vscode/
 .idea/
 *.swp
@@ -41,17 +41,20 @@ wheels/
 .DS_Store
 Thumbs.db
 
-# Gradio
-gradio/
+# Logs
 *.log
 
-# 大型数据文件
-*.csv
-*.zip
-*.gz
+# Environment
+.env
+.env.local
 
-# 实验结果
-*_results.npy
-*.png
-!requirements.txt
-!README.md
+# Model weights (keep only the best one)
+model_*.pth
+exp*_model.pth
+
+# Submissions (keep only the best one)
+submission_*.csv
+
+# Temporary files
+*.tmp
+temp/

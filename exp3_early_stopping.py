@@ -8,8 +8,13 @@ import pandas as pd
 import numpy as np
 from torch.utils.data import DataLoader, TensorDataset
 from sklearn.model_selection import train_test_split
+import matplotlib.pyplot as plt
 
 script_dir = os.path.dirname(os.path.abspath(__file__))
+
+print("="*60)
+print("实验 3: Adam + Early Stopping + Batch Size 128")
+print("="*60)
 
 print("Loading data...")
 train_df = pd.read_csv(os.path.join(script_dir, 'train.csv'))
@@ -40,14 +45,18 @@ class SimpleCNN(nn.Module):
             
             nn.Conv2d(32, 64, kernel_size=3, padding=1),
             nn.ReLU(),
+            nn.MaxPool2d(2, 2),
+            
+            nn.Conv2d(64, 128, kernel_size=3, padding=1),
+            nn.ReLU(),
             nn.MaxPool2d(2, 2)
         )
         
         self.classifier = nn.Sequential(
-            nn.Linear(64 * 7 * 7, 128),
+            nn.Linear(128 * 3 * 3, 256),
             nn.ReLU(),
             nn.Dropout(0.5),
-            nn.Linear(128, 10)
+            nn.Linear(256, 10)
         )
     
     def forward(self, x):
@@ -70,24 +79,29 @@ class EarlyStopping:
         self.counter = 0
         self.best_loss = None
         self.early_stop = False
+        self.best_model_weights = None
         self.best_epoch = 0
         
-    def __call__(self, val_loss):
+    def __call__(self, val_loss, model, epoch):
         if self.best_loss is None:
             self.best_loss = val_loss
-            self.best_epoch = 0
+            self.best_model_weights = {k: v.cpu().clone() for k, v in model.state_dict().items()}
+            self.best_epoch = epoch
         elif val_loss > self.best_loss - self.min_delta:
             self.counter += 1
             if self.counter >= self.patience:
                 self.early_stop = True
+                model.load_state_dict(self.best_model_weights)
+                print(f'\nRestored best model weights from epoch {self.best_epoch + 1}')
         else:
             self.best_loss = val_loss
-            self.best_epoch = 0
+            self.best_model_weights = {k: v.cpu().clone() for k, v in model.state_dict().items()}
+            self.best_epoch = epoch
             self.counter = 0
 
 early_stopping = EarlyStopping(patience=10, min_delta=0.0001)
 
-print("Training CNN with Adam + Batch Size 128 + Early Stopping (Exp3)...")
+print("Training with Adam (lr=0.001, batch_size=128) + Early Stopping...")
 max_epochs = 50
 train_losses = []
 val_losses = []
@@ -138,31 +152,55 @@ for epoch in range(max_epochs):
     val_losses.append(avg_val_loss)
     val_accuracies.append(val_acc)
     
-    early_stopping(avg_val_loss)
+    early_stopping(avg_val_loss, model, epoch)
     
     if (epoch + 1) % 5 == 0 or epoch == 0 or early_stopping.early_stop:
         print(f'Epoch [{epoch+1}/{max_epochs}], Train Loss: {avg_train_loss:.4f}, Train Acc: {train_acc:.2f}%, Val Loss: {avg_val_loss:.4f}, Val Acc: {val_acc:.2f}%')
     
     if early_stopping.early_stop:
         print(f"\nEarly stopping triggered at epoch {epoch+1}!")
+        print(f"Best validation loss: {early_stopping.best_loss:.4f} at epoch {early_stopping.best_epoch + 1}")
         break
 
 actual_epochs = epoch + 1
+best_val_acc = val_accuracies[early_stopping.best_epoch]
 print(f"\nTraining completed! Trained for {actual_epochs} epochs")
-print(f"Best validation accuracy: {val_accuracies[early_stopping.best_epoch]:.2f}%")
-
-torch.save(model.state_dict(), os.path.join(script_dir, 'model_exp3.pth'))
+print(f"Best validation accuracy: {best_val_acc:.2f}%")
 
 results = {
-    'train_losses': train_losses[:actual_epochs],
-    'val_losses': val_losses[:actual_epochs],
-    'train_accuracies': train_accuracies[:actual_epochs],
-    'val_accuracies': val_accuracies[:actual_epochs],
-    'best_val_acc': max(val_accuracies),
-    'final_val_acc': val_accuracies[-1],
-    'best_val_loss': min(val_losses),
+    'experiment': 'Exp3_Adam_ES_BS128',
+    'optimizer': 'Adam',
+    'learning_rate': 0.001,
+    'batch_size': 128,
+    'data_augmentation': False,
+    'early_stopping': True,
+    'train_losses': train_losses,
+    'val_losses': val_losses,
+    'train_accuracies': train_accuracies,
+    'val_accuracies': val_accuracies,
+    'best_val_acc': best_val_acc,
+    'best_epoch': early_stopping.best_epoch,
     'actual_epochs': actual_epochs
 }
 
-np.save(os.path.join(script_dir, 'exp3_results.npy'), results)
-print("Results saved!")
+np.save(os.path.join(script_dir, 'exp3_results.npy'), results, allow_pickle=True)
+print("Results saved to exp3_results.npy")
+
+print("\nGenerating predictions for test set...")
+test_df = pd.read_csv(os.path.join(script_dir, 'test.csv'))
+X_test = test_df.values.astype(np.float32) / 255.0
+X_test_tensor = torch.tensor(X_test).reshape(-1, 1, 28, 28).to(device)
+
+model.eval()
+
+with torch.no_grad():
+    outputs = model(X_test_tensor)
+    _, predicted = torch.max(outputs, 1)
+    predictions = predicted.cpu().numpy()
+
+submission = pd.DataFrame({
+    'ImageId': range(1, len(predictions) + 1),
+    'Label': predictions
+})
+submission.to_csv(os.path.join(script_dir, 'submission_exp3.csv'), index=False)
+print(f"Submission file saved! Total predictions: {len(predictions)}")
